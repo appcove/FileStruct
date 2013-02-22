@@ -30,7 +30,7 @@ import hashlib
 import pwd
 import grp
 import stat
-
+import subprocess
 
 
 HASH_MATCH = re.compile('^[a-f0-9]{40}$').match
@@ -85,6 +85,9 @@ class Client():
     self.DatabaseGroup = None
     self.EffectiveUser = None
     self.EffectiveGroup = None
+        
+    
+    self.bin_convert = '/usr/bin/convert'
     
 
     del(Path, InternalLocation)
@@ -257,6 +260,15 @@ class TempDir():
     if not FILENAME_MATCH(FileName):
       raise ValueError("Invalid file name: {0}".format(FileName))
     return TempFile(self, join(self.Path, FileName))
+
+  def convert_resize(self, SourceFileName, DestFileName, SizeSpec):
+    subprocess.check_call((
+      self.Client.bin_convert,
+      self[SourceFileName].Path,
+      '-resize', SizeSpec,
+      self[DestFileName].Path,
+      ))
+    
   
 
 
@@ -319,7 +331,6 @@ class TempFile(BaseFile):
   
   def Link(self, hash):
     os.symlink(self.Client[hash].Path, self.Path)
-
 
   def Delete(self):
     os.unlink(self.Path)

@@ -145,6 +145,12 @@ Returns True if the specified hash exists in the database.  Otherwise returns Fa
 ### `client[hash]`
 Returns a `FileStruct.HashFile` object or raises a `KeyError`.  See **Working with Files** for more information.
 
+### `client.Path`
+Fully qualified filesystem path to the database.
+
+### `client.bin_convert`
+Full path to ImageMagick convert binary.  Defaults to `/usr/bin/convert`.
+
 ### `client.TempDir()`
 
 Return a `FileStruct.TempDir` object (context manager) which will create a temporary directory and (typically) remove it when finished.  See **Working with Files** for more information.
@@ -193,17 +199,31 @@ Opens the hash file in the database for reading (bytes).  Because this is a pass
 Reads the entire file into memory as a `bytes` object  
 **Warning: do not use this with large files.**
 
-#### `client[hash].NginxHeaders()`
-Returns a list of 2-tuples to be set as Nginx headers.  For example:
+#### `client[hash].InternalURI`
+Returns an internal URI suitable for passing back to a front-end webserver, such as nginx.  Joins the `client.InternalLocation` with the rest of the `database/Data/...` path to produce a URL that can be used with `X-Accel-Redirect`.
 
 ```python
-[
-  ('X-Accel-Redirect', '/FileStruct/da/39/da39a3ee5e6b4b0d3255bfef95601890afd80709),
-]
+headers.add_header('Content-type', 'image/jpeg')
+headers.add_header('X-Accel-Redirect', client[hash].InternalURI)
 ```
 
-Note: this is formed as a list to allow for future addition of other headers that may be useful to Nginx.
+Example nginx configuration snippet:
+```conf
+location ^~ /FileStruct/
+{
+    internal;
+    alias /path/to/my/database/Data/;  #TRAILING SLASH IMPORTANT
+}
+```
 
+Example return: 
+```python
+>>> client = FileServer.Client(Path, InternalLocation='/FileStruct')
+>>> client['da39a3ee5e6b4b0d3255bfef95601890afd80709'].InternalURI
+'/FileStruct/da/39/da39a3ee5e6b4b0d3255bfef95601890afd80709'
+```
+
+More info on XSendFile here: http://wiki.nginx.org/XSendfile
 
 ### `client.TempDir()`
 
@@ -242,6 +262,9 @@ Defaults to `False`.  Set to `True` to cause the temporary directory to be moved
 Returns a TempFile object with the name specified in `filename`.  
 
 `filename` is restricted to the following: `[a-zA-Z0-9_.+-]{1,255}`
+
+#### `TempDir[filename].Link(hash)`
+Create a symbolic link in the temporary directory to the specified hash file in the database.  This is useful for obtaining access to files for subsequent operations, like an image resize.
 
 #### `TempDir[filename].GetStream()`
 Opens the temporary file for reading (bytes).  Because this is a pass through to `open()`, it can be used as a context manager (`with` statement).
