@@ -29,7 +29,7 @@ import datetime
 import hashlib
 import pwd
 import grp
-
+import stat
 
 
 
@@ -221,13 +221,15 @@ class Client():
     destpath = self.HashToPath(hash)
 
     if exists(destpath):
-      return False
+      return
     
     if not isdir(dirname(destpath)):
       os.makedirs(dirname(destpath))
     
+    # Move and remove write privileges
     os.rename(sourcepath, destpath)
-    return True
+    os.chmod(destpath, os.stat(destpath).st_mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
+    
 
 
 
@@ -243,7 +245,7 @@ class TempDir():
 
   def __exit__(self, exc_type, exc_value, traceback):
     if exc_type is not None:
-      with open(join(self.Path, 'PythonException.txt'), 'wt', encoding='utf-8') as ef:
+      with open(join(self.Path, 'Python-Exception.txt'), 'wt', encoding='utf-8') as ef:
         ef.write(FormatException(exc_value))
       
     if exc_type is not None or self.Retain:
@@ -263,8 +265,12 @@ class BaseFile():
     self.Client = Client
     self.Path = Path
 
-  def Stream(self):
+  def GetStream(self):
     return open(self.Path, 'rb')
+
+  def GetData(self):
+    with self.GetStream() as stream:
+      return stream.read()
 
 
 class HashFile(BaseFile):

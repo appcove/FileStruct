@@ -43,7 +43,12 @@ At the point a file is inserted or removed from FileStruct, it is a filesystem m
 FileStruct is not designed to store MetaData.  It is designed to store file content. There may be several "files" which refer to the same content.  `empty.log`, `empty.txt`, and `empty.ini` may all refer to the empty file `Data/da/39/da39a3ee5e6b4b0d3255bfef95601890afd80709`.  However, this file will be retained as long as any aspect of the application still uses it.
 
 ### Automatic De-Duplication
-Because file content is stored in files with the hash of the content, automatic file-level de-duplication occurs. When a file is pushed to FileStruct that already exists, there is no need to write it again.  This carries the distinct benifit of being able to use the same FileStruct database across multiple projects if desired, because the content of file `Data/da/39/da39a3ee5e6b4b0d3255bfef95601890afd80709` is always the same, regardless of the application that placed it there.
+Because file content is stored in files with the hash of the content, automatic file-level de-duplication occurs. When a file is pushed to FileStruct that already exists, there is no need to write it again.  
+
+This carries the distinct benifit of being able to use the same FileStruct database across multiple projects if desired, because the content of file `Data/da/39/da39a3ee5e6b4b0d3255bfef95601890afd80709` is always the same, regardless of the application that placed it there.
+
+_**Note:** In the event that multiple instances or applications use the same database, the garbage collection routine MUST take all references to a given hash into account, across all applications that use the database.  Otherwise, it would be easy to delete data that should be retained._
+
 
 ## Database Design
 
@@ -54,7 +59,7 @@ The database should be placed in a secure directory that only the owner of the a
 ```text
 /path/to/app/database
   FileStruct.json
-    contains a JSON value like {"Version": 1}
+    contains a JSON value like {"Version": 1, "User": "MyApp", "Group": "MyApp"}
 
   Data
     {00-ff}
@@ -89,7 +94,9 @@ The database should be placed in a secure directory that only the owner of the a
 
 ```
 
-In order for the FileStruct Client to operate, the FileStruct.json file must be present and readable.  If any of the above top-level directories are missing, they will be automatically created by FileStruct.
+In order for the FileStruct Client to operate, the FileStruct.json file must be present and readable.  If any of the above top-level directories are missing, they will be automatically created by FileStruct.  
+
+Each file placed in the `database/Data` directory will have write permissions removed.  This is to hopefully prevent accidental modification of immutable data in the database.
 
 ## Configuration: `FileStruct.json`
 
@@ -128,7 +135,7 @@ import FileStruct
 
 client = FileStruct.Client(
   Path = '/home/myapp/filestruct',
-  NginxPrefix = '/FileStruct',
+  NginxLocation = '/FileStruct',
   )
 ```
 
@@ -165,6 +172,8 @@ Takes the path to a file.  Reads the file into the database.  Does not modify th
 ### `hash in client`
 Returns True if the specified hash exists in the database.  Otherwise returns False.  Improperly formed hashes do not raise an error in this method.
 
+_Future Note: in the event that FileStruct has a remote back-end, like Amazon S3, this could be a resource-intensive operation._
+
 ### `client[hash]`
 Returns a `FileStruct.HashFile` object which wraps a file in the database.  If the file does not exist, a `KeyError` is raised.
 
@@ -177,8 +186,12 @@ The 40 character hash.
 #### `client[hash].Path`
 The full filesystem path to the hash file in the database.  This is for **READ ONLY** purposes.  Because the process calling this code has authority to write to this file, the database could be corrupted if this path is written to in any way.
 
-#### `client[hash].Stream()`
-Opens the hash file in the database for reading
+#### `client[hash].GetStream()`
+Opens the hash file in the database for reading (bytes).  Because this is a pass through to `open()`, it can be used as a context manager (`with` statement).
+
+#### `client[hash].GetData()`
+Reads the entire file into memory as a `bytes` object  
+**Warning: do not use this with large files.**
 
 #### `client[hash].NginxHeaders()`
 Returns a list of 2-tuples to be set as Nginx headers.  For example:
@@ -230,8 +243,12 @@ Returns a TempFile object with the name specified in `filename`.
 
 `filename` is restricted to the following: `[a-zA-Z0-9_.+-]{1,255}`
 
-#### `TempDir[filename].Ingest()`
-Calculates the hash of this file and then moves it into the database.  Returns the 40 character hash.
+#### `TempDir[filename].GetStream()`
+Opens the temporary file for reading (bytes).  Because this is a pass through to `open()`, it can be used as a context manager (`with` statement).
+
+#### `TempDir[filename].GetData()`
+Reads the entire temporary file into memory as a `bytes` object  
+**Warning: do not use this with large files.**
 
 #### `TempDir[filename].PutStream(stream)`
 Opens `filename` in the temporary directory for writing, and writes the entire contents of `stream` to it.
@@ -242,6 +259,8 @@ Opens `filename` in the temporary directory for writing and writes the entire co
 #### `TempDir[filename].PutFile(file)`
 Opens `filename` in the temporary directory for writing and writes the entire contents of `file` to it. 
 
+#### `TempDir[filename].Ingest()`
+Calculates the hash of this file and then moves it into the database.  Returns the 40 character hash.  This **moves** the file, so it will no longer exist in the temporary directory.
 
 
 ------
