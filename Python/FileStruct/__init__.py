@@ -67,7 +67,7 @@ class ConfigError(Exception):
 
 
 class Client():
-  def __init__(self, Path, NginxLocation='/FileStruct'):
+  def __init__(self, Path, InternalLocation='/FileStruct'):
     self.Path = abspath(Path)
     self.DataPath = join(self.Path, 'Data')
     self.ErrorPath = join(self.Path, 'Error')
@@ -78,7 +78,7 @@ class Client():
     
     self.Conf = None
 
-    self.NginxLocation = NginxLocation
+    self.InternalLocation = InternalLocation
     self.Version = 0
     
     self.DatabaseUser = None
@@ -87,7 +87,7 @@ class Client():
     self.EffectiveGroup = None
     
 
-    del(Path, NginxLocation)
+    del(Path, InternalLocation)
 
     
     try:
@@ -179,9 +179,9 @@ class Client():
     RequireValidHash(hash)
     return join(self.DataPath, hash[0:2], hash[2:4], hash)
   
-  def HashToNginxURI(self, hash):
+  def HashToInternalURI(self, hash):
     RequireValidHash(hash)
-    return join(self.NginxLocation, hash[0:2], hash[2:4], hash)
+    return join(self.InternalLocation, hash[0:2], hash[2:4], hash)
 
 
   def TempDir(self):
@@ -278,8 +278,9 @@ class HashFile(BaseFile):
     super().__init__(Client, Path)
     self.Hash = Hash
 
-  def NginxHeaders(self):
-    return [('X-Accel-Redirect', self.Client.HashToNginxURI(self.Hash))]
+  @property
+  def InternalURI(self):
+    return self.Client.HashToInternalURI(self.Hash)
 
 
 class TempFile(BaseFile):
@@ -316,7 +317,10 @@ class TempFile(BaseFile):
     with open(path, 'rb', buffering=0) as stream:
       return self.PutStream(stream)
   
-  
+  def Link(self, hash):
+    os.symlink(self.Client[hash].Path, self.Path)
+
+
   def Delete(self):
     os.unlink(self.Path)
 
