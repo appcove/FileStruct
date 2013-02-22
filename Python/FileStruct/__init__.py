@@ -62,7 +62,10 @@ def RandomName32():
     ).replace('.', '-')
 
 
-class ConfigError(Exception):
+class Error(Exception):
+  pass
+
+class ConfigError(Error):
   pass
 
 
@@ -262,14 +265,17 @@ class TempDir():
     return TempFile(self, join(self.Path, FileName))
 
   def convert_resize(self, SourceFileName, DestFileName, SizeSpec):
-    subprocess.check_call((
+    cmd = (
       self.Client.bin_convert,
       self[SourceFileName].Path,
       '-resize', SizeSpec,
       self[DestFileName].Path,
-      ))
-    
-  
+      )
+
+    try:
+      subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as e:
+      raise Error(e.output)
 
 
 class BaseFile():
