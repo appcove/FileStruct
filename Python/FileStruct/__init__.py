@@ -137,7 +137,7 @@ class Client():
     path = self.HashToPath(hash)
     
     if not exists(path):
-      return KeyError("Hash '{0}' does not exist in database.".format(hash))
+      raise KeyError("Hash '{0}' does not exist in database.".format(hash))
 
     return HashFile(self, path, hash)
 
