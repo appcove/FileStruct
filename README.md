@@ -4,6 +4,55 @@ FileStruct (https://github.com/appcove/FileStruct) is a general purpose file ser
 
 The primary goal is to create a high-performance and sensible local file server for web applications.  The secondary goal is to enable FileStruct to be a caching layer between an application and a storage backend (like Amazon S3).
 
+## Setup Instructions
+
+#### Create your database directory
+```bash
+$ mkdir /path/to/database
+$ chmod 770 /path/to/database
+```
+Note that the database MUST have group write permissions. 
+
+#### Verify the group is correct
+The group of `/path/to/database` will be used throughout the entire database directory.  Any user who wishes to write to the database must be in this group.  Permissions are checked on startup, so if the user is not a member of this group, then a `ConfigError` will be raised.
+
+#### Create a `FileStruct.json`
+```bash
+$ echo '{"Version":1}' > /path/to/database/FileStruct.json
+```
+
+Why do we require this file?  It is a safe-guard against writing into a directory accidentally.  If this file does not exist, then the database client will raise a `ConfigError`.
+
+If you are running code under **apache**, it will by default run as the `apache` user.  You may need to add a group to the `apache` user in order to have it access the database.  Assuming the database is owned by the `fileserver` group, then:
+
+```bash
+# usermod -a -G fileserver apache
+```
+
+may be used to add `apache` to the `fileserver` group.
+
+#### Connect the client
+```python
+>>> import FileStruct
+>>> client = FileStruct.Client('/path/to/database')
+>>> client.PutData(b'test')
+'a94a8fe5ccb19ba61c4c0873d391e987982fbbd3'
+>>> client['a94a8fe5ccb19ba61c4c0873d391e987982fbbd3'].GetData()
+b'test'
+```
+
+Assuming you are user `jason` and you created the `/path/to/database` to have the group `fileserver`, then the above will result in:
+
+```text
+$ ls -al /path/to/database
+drwxrwxr-x. 2 jason      fileserver 4096 Feb 22 17:13 Data
+drwxrwxr-x. 2 jason      fileserver 4096 Feb 22 17:13 Error
+-rw-r--r--. 1 fileserver fileserver   88 Feb 22 16:55 FileStruct.json
+drwxrwxr-x. 2 jason      fileserver 4096 Feb 22 17:13 Temp
+drwxrwxr-x. 2 jason      fileserver 4096 Feb 22 17:13 Trash
+```
+
+You are now ready to use FileStruct!
 
 ## Design Goals
 

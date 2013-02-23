@@ -84,11 +84,9 @@ class Client():
     self.InternalLocation = InternalLocation
     self.Version = 0
     
-    self.DatabaseUser = None
     self.DatabaseGroup = None
     self.EffectiveUser = None
     self.EffectiveGroup = None
-        
     
     self.bin_convert = '/usr/bin/convert'
     
@@ -114,57 +112,26 @@ class Client():
       raise ConfigError("This version of the FileStruct client cannot work with database Version {0} as found in config file: '{1}'".format(self.Version, self.ConfPath))
       
     try:
-      v = self.Conf['User']
-      if isinstance(v, int):
-        self.DatabaseUser = pwd.getpwuid(v)
-      elif isinstance(v, str):
-        self.DatabaseUser = pwd.getpwnam(v)
-      else:
-        raise ValueError("Invalid datatype for 'User': {0}".format(type(v)))
-    except Exception as e:
-      raise ConfigError("Error reading 'User' from config file '{0}': {1}".format(self.ConfPath, str(e)))
-    
-    try:
-      v = self.Conf['Group']
-      if isinstance(v, int):
-        self.DatabaseGroup = grp.getgrgid(v)
-      elif isinstance(v, str):
-        self.DatabaseGroup = grp.getgrnam(v)
-      else:
-        raise ValueError("Invalid datatype for 'Group': {0}".format(type(v)))
-    except Exception as e:
-      raise ConfigError("Error reading 'Group' from config file '{0}': {1}".format(self.ConfPath, str(e)))
-
-    try:
+      self.DatabaseGroup = grp.getgrgid(os.stat(self.Path).st_gid)
       self.EffectiveUser = pwd.getpwuid(os.geteuid())
       self.EffectiveGroup = grp.getgrgid(os.getegid())
     except Exception as e:
       raise ConfigError(e)
     
+    # Make sure that the effective user is in the Database Group    
+    # Note: the gr_mem attribute does not contain the primary group member of the group
+    if self.EffectiveUser.pw_gid != self.DatabaseGroup.gr_gid and self.EffectiveUser.pw_name not in self.DatabaseGroup.gr_mem:
+      raise ConfigError("Effective user (name={0}, uid={1}) is not a member of database group (name={2}, gid={3}) specified in config file '{4}'.".format(self.EffectiveUser.pw_name, self.EffectiveUser.pw_uid, self.DatabaseGroup.gr_name, self.DatabaseGroup.gr_gid, self.ConfPath))
     
-    if self.EffectiveUser.pw_uid != self.DatabaseUser.pw_uid:
-      raise ConfigError("User '{0}' specified in config file '{1}' does not match effective user (name={2}, uid={3}).".format(self.Conf['User'], self.ConfPath, self.EffectiveUser.pw_name, self.EffectiveUser.pw_uid)) 
-
-    if self.EffectiveGroup.gr_gid != self.DatabaseGroup.gr_gid:
-      raise ConfigError("Group '{0}' specified in config file '{1}' does not match effective group (name={2}, gid={3}).".format(self.Conf['Group'], self.ConfPath, self.EffectiveGroup.gr_name, self.EffectiveGroup.gr_gid)) 
-
-    
+    # Make the basic database directories if they do not exist. 
     try:
-      if not isdir(self.DataPath):
-        os.mkdir(self.DataPath)
-      
-      if not isdir(self.ErrorPath):
-        os.mkdir(self.ErrorPath)
-
-      if not isdir(self.TempPath):
-        os.mkdir(self.TempPath)
-      
-      if not isdir(self.TrashPath):
-        os.mkdir(self.TrashPath)
+      for dir in (self.DataPath, self.ErrorPath, self.TempPath, self.TrashPath):
+        if not isdir(dir):
+          self._mkdir(dir)
     except Exception as e:
       raise ConfigError("Error checking or creating database directories in '{0}': {1}".format(self.Path, str(e)))
-
-
+      
+  
   def __getitem__(self, hash):
     RequireValidHash(hash)
     path = self.HashToPath(hash)
@@ -180,6 +147,7 @@ class Client():
     except ValueError: 
       #designed to catch error from RequireValidHash()
       return False
+
 
   def HashToPath(self, hash):
     RequireValidHash(hash)
@@ -208,7 +176,7 @@ class Client():
       pass#with
       
       hash = sha1.hexdigest()
-      self._MoveFile(TD['StreamFile'].Path, hash)
+      self._ingestfile(TD['StreamFile'].Path, hash)
       return hash
     pass#with  
 
@@ -222,19 +190,33 @@ class Client():
       return self.PutStream(stream)
 
 
+  def _mkdir(self, dir):
+    os.mkdir(dir)
+    # Set to rwxrwxr-x or (775) and set the file group to the database group
+    os.chmod(dir, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+    os.chown(dir, -1, self.DatabaseGroup.gr_gid)
+    
  
-  def _MoveFile(self, sourcepath, hash):
+  def _ingestfile(self, sourcepath, hash):
     destpath = self.HashToPath(hash)
 
     if exists(destpath):
       return
     
+    if not isdir(dirname(dirname(destpath))):
+      self._mkdir(dirname(dirname(destpath)))
+
     if not isdir(dirname(destpath)):
-      os.makedirs(dirname(destpath))
+      self._mkdir(dirname(destpath))
     
-    # Move and remove write privileges
+    # Set the file group to the database group
+    os.chown(sourcepath, -1, self.DatabaseGroup.gr_gid)
+
+    # Set perms to r--r--r-- (or 444)
+    os.chmod(sourcepath, (stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH))
+    
+    # Move it into the DB dir
     os.rename(sourcepath, destpath)
-    os.chmod(destpath, os.stat(destpath).st_mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
     
 
 
@@ -316,7 +298,7 @@ class TempFile(BaseFile):
         sha1.update(buf)
     
     hash = sha1.hexdigest()
-    self.Client._MoveFile(self.Path, hash)
+    self.Client._ingestfile(self.Path, hash)
     return hash
 
   def PutStream(self, stream):
