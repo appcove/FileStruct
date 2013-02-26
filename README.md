@@ -59,6 +59,37 @@ drwxrwxr-x. 2 jason      fileserver 4096 Feb 22 17:13 Trash
 
 You are now ready to use FileStruct!
 
+#### Setup app and httpd to serve files directly
+
+Point is to not read the file with application code, but offload the task to http frontend, where it's highly optimized and can be done much more efficiently.
+
+For [Nginx http daemon](http://wiki.nginx.org) with the aforementioned paths and `/FileStruct` *internal* URI (will result in 404 for client requests) to serve file contents from, following configuration can be used:
+
+```conf
+location /FileStruct/
+{
+  internal; # MUST be used, otherwise all files are public (but with obfuscated URIs)
+  alias /path/to/database/Data/; # Trailing slash is important
+}
+```
+
+Then update the application to send [X-Accel-Redirect header](http://wiki.nginx.org/X-accel) to http daemon, instead of serving the file contents directly (simple example with bottle framework):
+
+```python
+client = FileStruct.Client(
+  Path = '/path/to/database',
+  InternalLocation = '/FileStruct', # Specifies configured Nginx URI
+)
+
+@route('/:filename')
+def download(filename):
+  file_id = file_ids[filename]
+  return HTTPResponse(headers={'X-Accel-Redirect': client[file_id].InternalURI})
+```
+
+Note that some daemons (e.g. lighttpd) use X-Sendfile header for such internal redirects instead.
+
+If http frontend has no support for internal redirects at all, client redirects can still be used for efficiency, but they require additional http request round-trip and must not be used for potentially private files, as app will have no control over access to these by InternalURI.
 
 
 ## Design Goals
@@ -274,8 +305,8 @@ Example nginx configuration snippet:
 ```conf
 location ^~ /FileStruct/
 {
-    internal;
-    alias /path/to/my/database/Data/;  #TRAILING SLASH IMPORTANT
+  internal; # MUST be used, otherwise all files are public (but with obfuscated URIs)
+  alias /path/to/database/Data/; # Trailing slash is important
 }
 ```
 
