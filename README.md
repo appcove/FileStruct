@@ -67,6 +67,11 @@ Where possible, streaming hash functions are used to prevent iterating over a fi
 ### Direct serving from Nginx
 FileStruct is designed so that Nginx can serve files directly from it's Data directory using an `X-Accel-Redirect` header.  For more information on this Nginx configuration directive, see http://wiki.nginx.org/XSendfile
 
+Assuming that ***nginx*** runs under `nginx` user and file database is owned by the `fileserver` group, `nginx` needs to be in the `fileserver` group to serve files:
+```bash
+# usermod -a -G fileserver nginx
+```
+
 ### Secure
 FileStruct is designed to be as secure as your hosting configuration.  Where possible, a dedicated user should be allocated to read/write to FileStruct, and the database directory restricted to this user.
 
