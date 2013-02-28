@@ -96,7 +96,7 @@ class Client():
     
     try:
       with open(self.ConfPath, 'r', encoding='utf-8') as f:
-        self.Conf = json.loads(str.join('', (line for line in f if line[0] != '#')))
+        self.Conf = json.loads(str.join('', (line for line in f if line.lstrip()[0] != '#')))
     except Exception as e:
       raise ConfigError("Error loading config file '{0}': {1}".format(self.ConfPath, str(e)))
 
