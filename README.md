@@ -178,7 +178,8 @@ The primary group that "owns" the database.  Can be an integer UID or string Use
 `"User": 500` and `"User": "MyApp"` are both valid.
 
 
-## `FileStruct.Client(Path, NginxLocation)`
+
+## `FileStruct.Client(Path, InternalLocation)`
 
 Import `FileStruct` and create an instance of the `Client` class.  This operation will open `FileStruct.json`, verify it's contents, and check for the existence of several directories.  Therefore it is best to create a aingle instance and re-use it.
 
@@ -189,7 +190,7 @@ import FileStruct
 
 client = FileStruct.Client(
   Path = '/home/myapp/filestruct',
-  NginxLocation = '/FileStruct',
+  InternalLocation = '/FileStruct',
   )
 ```
 
