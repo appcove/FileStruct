@@ -4,19 +4,23 @@ FileStruct (https://github.com/appcove/FileStruct) is a general purpose file ser
 
 The primary goal is to create a high-performance and sensible local file server for web applications.  The secondary goal is to enable FileStruct to be a caching layer between an application and a storage backend (like Amazon S3).
 
+
+
 ## Setup Instructions
 
 #### Create your database directory
+
 ```bash
 $ mkdir /path/to/database
 $ chmod 770 /path/to/database
 ```
-Note that the database MUST have group write permissions. 
+Note that the database MUST have group write permissions.
 
 #### Verify the group is correct
 The group of `/path/to/database` will be used throughout the entire database directory.  Any user who wishes to write to the database must be in this group.  Permissions are checked on startup, so if the user is not a member of this group, then a `ConfigError` will be raised.
 
 #### Create a `FileStruct.json`
+
 ```bash
 $ echo '{"Version":1}' > /path/to/database/FileStruct.json
 ```
@@ -32,6 +36,7 @@ If you are running code under **apache**, it will by default run as the `apache`
 may be used to add `apache` to the `fileserver` group.
 
 #### Connect the client
+
 ```python
 >>> import FileStruct
 >>> client = FileStruct.Client('/path/to/database')
@@ -53,6 +58,8 @@ drwxrwxr-x. 2 jason      fileserver 4096 Feb 22 17:13 Trash
 ```
 
 You are now ready to use FileStruct!
+
+
 
 ## Design Goals
 
@@ -97,7 +104,7 @@ At the point a file is inserted or removed from FileStruct, it is a filesystem m
 FileStruct is not designed to store MetaData.  It is designed to store file content. There may be several "files" which refer to the same content.  `empty.log`, `empty.txt`, and `empty.ini` may all refer to the empty file `Data/da/39/da39a3ee5e6b4b0d3255bfef95601890afd80709`.  However, this file will be retained as long as any aspect of the application still uses it.
 
 ### Automatic De-Duplication
-Because file content is stored in files with the hash of the content, automatic file-level de-duplication occurs. When a file is pushed to FileStruct that already exists, there is no need to write it again.  
+Because file content is stored in files with the hash of the content, automatic file-level de-duplication occurs. When a file is pushed to FileStruct that already exists, there is no need to write it again.
 
 This carries the distinct benifit of being able to use the same FileStruct database across multiple projects if desired, because the content of file `Data/da/39/da39a3ee5e6b4b0d3255bfef95601890afd80709` is always the same, regardless of the application that placed it there.
 
@@ -106,7 +113,7 @@ _**Note:** In the event that multiple instances or applications use the same dat
 
 ## Database Design
 
-The database should be placed in a secure directory that only the owner of the application can read and write to.  
+The database should be placed in a secure directory that only the owner of the application can read and write to.
 
 **SECURITY NOTE:** _mod_wsgi runs by default as the apache user.  It can be configured to run as a different user.  We recommend a dedicated user to run the application and access FileStruct files._
 
@@ -148,13 +155,15 @@ The database should be placed in a secure directory that only the owner of the a
 
 ```
 
-In order for the FileStruct Client to operate, the FileStruct.json file must be present and readable.  If any of the above top-level directories are missing, they will be automatically created by FileStruct.  
+In order for the FileStruct Client to operate, the FileStruct.json file must be present and readable.  If any of the above top-level directories are missing, they will be automatically created by FileStruct.
 
 Each file placed in the `database/Data` directory will have write permissions removed.  This is to hopefully prevent accidental modification of immutable data in the database.
 
+
+
 ## Configuration: `FileStruct.json`
 
-Each time a `FileStruct.Client` object is created, the `FileStruct.json` file is loaded.  The contents of this file are a simple JSON string.  
+Each time a `FileStruct.Client` object is created, the `FileStruct.json` file is loaded.  The contents of this file are a simple JSON string.
 
 **Note: Lines beginning with # are ignored.**
 
@@ -170,11 +179,11 @@ Each time a `FileStruct.Client` object is created, the `FileStruct.json` file is
 For future adjustments to the database format.  Currently must be `1`.
 
 #### `User`
-The user that "owns" the database.  Can be an integer UID or string Username.  
+The user that "owns" the database.  Can be an integer UID or string Username.
 `"User": 500` and `"User": "MyApp"` are both valid.
 
 #### `Group`
-The primary group that "owns" the database.  Can be an integer UID or string Username.  
+The primary group that "owns" the database.  Can be an integer UID or string Username.
 `"User": 500` and `"User": "MyApp"` are both valid.
 
 
@@ -226,7 +235,6 @@ Takes the path to a file.  Reads the file into the database.  Does not modify th
 
 
 
-
 ## Working with Files
 
 ### `hash in client`
@@ -250,7 +258,7 @@ The full filesystem path to the hash file in the database.  This is for **READ O
 Opens the hash file in the database for reading (bytes).  Because this is a pass through to `open()`, it can be used as a context manager (`with` statement).
 
 #### `client[hash].GetData()`
-Reads the entire file into memory as a `bytes` object  
+Reads the entire file into memory as a `bytes` object
 **Warning: do not use this with large files.**
 
 #### `client[hash].InternalURI`
@@ -270,7 +278,7 @@ location ^~ /FileStruct/
 }
 ```
 
-Example return: 
+Example return:
 ```python
 >>> client = FileServer.Client(Path, InternalLocation='/FileStruct')
 >>> client['da39a3ee5e6b4b0d3255bfef95601890afd80709'].InternalURI
@@ -310,10 +318,10 @@ A reference to the `FileStruct.Client` object that created this `FileStruct.Temp
 The full path of the temporary directory.
 
 #### `TempDir.Retain`
-Defaults to `False`.  Set to `True` to cause the temporary directory to be moved to the `database/Error` directory when the context manager exits (e.g. end of `with` statement).  
+Defaults to `False`.  Set to `True` to cause the temporary directory to be moved to the `database/Error` directory when the context manager exits (e.g. end of `with` statement).
 
 #### `TempDir[filename]`
-Returns a TempFile object with the name specified in `filename`.  
+Returns a TempFile object with the name specified in `filename`.
 
 `filename` is restricted to the following: `[a-zA-Z0-9_.+-]{1,255}`
 
@@ -324,7 +332,7 @@ Create a symbolic link in the temporary directory to the specified hash file in 
 Opens the temporary file for reading (bytes).  Because this is a pass through to `open()`, it can be used as a context manager (`with` statement).
 
 #### `TempDir[filename].GetData()`
-Reads the entire temporary file into memory as a `bytes` object  
+Reads the entire temporary file into memory as a `bytes` object
 **Warning: do not use this with large files.**
 
 #### `TempDir[filename].PutStream(stream)`
@@ -334,11 +342,11 @@ Opens `filename` in the temporary directory for writing, and writes the entire c
 Opens `filename` in the temporary directory for writing and writes the entire contents of `data` to it.  `data` must be `bytes`.
 
 #### `TempDir[filename].PutFile(file)`
-Opens `filename` in the temporary directory for writing and writes the entire contents of `file` to it. 
+Opens `filename` in the temporary directory for writing and writes the entire contents of `file` to it.
 
 #### `TempDir[filename].Ingest()`
 Calculates the hash of this file and then moves it into the database.  Returns the 40 character hash.  This **moves** the file, so it will no longer exist in the temporary directory.
 
 
 ------
-vim:encoding=utf-8:ts=2:sw=2:expandtab 
+vim:encoding=utf-8:ts=2:sw=2:expandtab
