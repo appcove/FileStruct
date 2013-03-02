@@ -25,6 +25,8 @@ import tempfile
 import shutil
 import json
 import hashlib
+import random
+import string
 
 
 try: import FileStruct
@@ -40,13 +42,14 @@ except ImportError:
     sys.path.pop(0)
 
 
-
 class TestClientBase(unittest.TestCase):
 
-  valid_config = '{"Version":1}'
-
   def setUp(self):
+    self.ValidConfig = '{"Version":1}'
+    self.ValidConfigVersion = 1
+
     self.Path = tempfile.mkdtemp(suffix='_FileStruct_Test')
+    self.DataPath = join(self.Path, 'Data') # expected to be there by e.g. httpd
     self.PathConfig = join(self.Path, 'FileStruct.json')
 
   def tearDown(self):
@@ -59,7 +62,7 @@ class TestClientBase(unittest.TestCase):
       fp.write(config)
 
   def client_from_valid_config(self):
-    return self.client_from_config(self.valid_config, False)
+    return self.client_from_config(self.ValidConfig, False)
 
   def client_from_config(self, config, json_encode=True):
     self.write_config(config, json_encode=json_encode)
@@ -70,11 +73,10 @@ class TestClientBase(unittest.TestCase):
       self.client_from_config(config, json_encode=json_encode)
 
 
-
 class TestClientBasic(TestClientBase):
 
   def test_Minimal(self):
-    self.client_from_valid_config()
+    self.assertTrue(self.client_from_valid_config()) # to make sure that "if client:" will work
     self.client_from_config({'Version': 1})
     self.client_from_config({'Version': '1'})
     self.client_from_config('{"Version": "1"}', False)
@@ -113,7 +115,28 @@ class TestClientInvalidConfig(TestClientBase):
     self.client_from_config_err('{"Version": 1#comment }', False)
     self.client_from_config_err('{#"Version": 1}', False)
     self.client_from_config_err('#{"Version": 1}', False)
-    self.client_from_config_err(self.valid_config.rstrip() + '#test', False)
+    self.client_from_config_err(self.ValidConfig.rstrip() + '#test', False)
+
+  def test_Signature(self):
+    self.write_config(self.ValidConfig, False)
+    FileStruct.Client(Path=self.Path, InternalLocation='/Whatever')
+    FileStruct.Client(self.Path, '/Whatever')
+    with self.assertRaises(TypeError):
+      FileStruct.Client()
+    with self.assertRaises(TypeError):
+      FileStruct.Client(InternalLocation='/Whatever')
+
+  def test_Types(self):
+    self.write_config(self.ValidConfig, False)
+    with self.assertRaises(Exception):
+      FileStruct.Client(None)
+    with self.assertRaises(Exception):
+      FileStruct.Client(object())
+    FileStruct.Client(self.Path, None)
+    FileStruct.Client(self.Path, object())
+    with self.assertRaises(TypeError):
+      FileStruct.Client(self.Path.encode('utf-8'))
+    FileStruct.Client(self.Path, b'/Whatever')
 
   def test_RandomJSON(self):
     self.client_from_config_err({})
@@ -134,7 +157,7 @@ class TestClientInvalidConfig(TestClientBase):
       FileStruct.Client(self.Path)
     self.assertFalse(exists(self.PathConfig)) # make sure it wasn't auto-created
 
-    self.write_config(self.valid_config, False)
+    self.write_config(self.ValidConfig, False)
     os.chmod(self.PathConfig, 0)
     with self.assertRaises(FileStruct.ConfigError):
       FileStruct.Client(self.Path)
@@ -193,17 +216,16 @@ class TestClientDBDir(TestClientBase):
 
     # Valid config file in place of dir
     with open(self.Path, 'w', encoding='utf-8') as fp:
-      fp.write(self.valid_config)
+      fp.write(self.ValidConfig)
     with self.assertRaises(FileStruct.ConfigError):
       FileStruct.Client(self.Path)
     self.assertTrue(isfile(self.Path))
 
   def test_DataDirCreated(self):
     # Expected to be there, according to frontend httpd setup
-    data_dir = join(self.Path, 'Data')
-    self.assertFalse(isdir(data_dir))
+    self.assertFalse(isdir(self.DataPath))
     self.client_from_valid_config()
-    self.assertTrue(isdir(data_dir))
+    self.assertTrue(isdir(self.DataPath))
 
 
   def test_GidMismatch(self):
@@ -261,17 +283,135 @@ class TestClientDBDir(TestClientBase):
       os.stat = stat
 
 
-# class TestClientGet(TestClientBase):
+class TestClientOps(TestClientBase):
 
-# 	def test_Get(self):
-# 	def test_GetMissing(self):
-# 	def test_GetInvalidHash(self):
-# 	def test_Contains(self):
-# 	def test_ContainsInvalidHash(self):
-# 	def test_ContainsMissing(self):
+  def setUp(self):
+    super(TestClientOps, self).setUp()
+
+    self.write_config(self.ValidConfig, False)
+    self.InternalLocation = '/Whatever'
+    self.Client = FileStruct.Client(self.Path, self.InternalLocation)
+
+    self.FileContents = b'abcd'
+    self.FileHash = self.Client.PutData(self.FileContents)
+
+    self.FileHashNX = self.Client.PutData(b'')
+    os.unlink(self.Client[self.FileHashNX].Path)
+
+    random.seed(42)
+    self.FileHashInvalidList = [
+      self.FileHash[:-1] + '\0',
+      'x' + self.FileHash[1:],
+      '123',
+      'варвр',
+      ''.join( random.choice(string.hexdigits.lower())
+        for i in range(len(self.FileHash) - 2) ),
+      self.FileHash[2:],
+      self.FileHash + 'a123',
+      self.FileHash[:-2] + 'AB' ]
+
+    self.FileHashInvalidType = [
+      None, object(), str, type, True, self.FileHash.encode('ascii') ]
+
+
+class TestClientAttrs(TestClientOps):
+
+  def test_PublicAttrs(self):
+    self.assertEqual(self.Path, self.Client.Path)
+    self.assertEqual(self.DataPath, self.Client.DataPath)
+
+  def test_PrivateAttrs(self):
+    self.assertEqual(self.PathConfig, self.Client.ConfPath)
+    self.assertEqual(self.ValidConfigVersion, self.Client.Version)
+    self.assertEqual(self.InternalLocation, self.Client.InternalLocation)
+
+
+class TestClientHashes(TestClientOps):
+
+  def test_Get(self):
+    self.assertTrue(self.Client[self.FileHash])
+    with self.assertRaises(KeyError):
+      self.Client[self.FileHashNX]
+
+  def test_GetInvalidHash(self):
+    for bad_hash in self.FileHashInvalidList:
+      with self.assertRaises(ValueError):
+        self.Client[bad_hash]
+
+  def test_GetInvalidType(self):
+    for bad_type in self.FileHashInvalidType:
+      with self.assertRaises(TypeError):
+        self.Client[bad_type]
+
+  def test_Contains(self):
+    self.assertIs(self.FileHash in self.Client, True)
+    self.assertIs(self.FileHashNX in self.Client, False)
+
+  def test_ContainsInvalidType(self):
+    for bad_type in self.FileHashInvalidType:
+      with self.assertRaises(TypeError):
+        bad_type in self.Client
+
+  def test_ContainsInvalidHash(self):
+    for bad_hash in self.FileHashInvalidList:
+      self.assertFalse(bad_hash in self.Client)
+
+  def test_InternalURI(self):
+    self.assertTrue(self.Client.HashToInternalURI(self.FileHash))
+    self.assertTrue(self.Client.HashToInternalURI(self.FileHashNX))
+    self.assertIsInstance(self.Client.HashToInternalURI(self.FileHash), str)
+    for bad_hash in self.FileHashInvalidList:
+      with self.assertRaises(ValueError):
+        self.Client.HashToInternalURI(bad_hash)
+    for bad_type in self.FileHashInvalidType:
+      with self.assertRaises(TypeError):
+        self.Client.HashToInternalURI(bad_type)
+    self.assertTrue(
+      self.Client.HashToInternalURI(self.FileHash).startswith(self.InternalLocation + '/') )
+    self.assertFalse('//' in self.Client.HashToInternalURI(self.FileHash))
+    self.assertTrue(
+      self.Client.HashToInternalURI(self.FileHashNX).startswith(self.InternalLocation + '/') )
+
+  def test_InternalURISlashes(self):
+    # Make sure paths are *not* auto-fixed (if fails, update docs)
+    bad_path = '//some///broken/path/../whatever//./'
+    client = FileStruct.Client(self.Path, bad_path)
+    file_hash = client.PutData(self.FileContents)
+    self.assertTrue(client.HashToInternalURI(file_hash).startswith(bad_path))
+    self.assertFalse(client.HashToInternalURI(file_hash).startswith(bad_path + '/'))
+
+  def test_InternalURIRecode(self):
+    # Make sure path encoding is *not* auto-fixed (if fails, update docs)
+    bad_path = '//some\0///broken\n\n/path/../фывапр//./'
+    client = FileStruct.Client(self.Path, bad_path)
+    file_hash = client.PutData(self.FileContents)
+    self.assertTrue(client.HashToInternalURI(file_hash).startswith(bad_path))
+
+  def test_Path(self):
+    self.assertTrue(self.Client.HashToPath(self.FileHash))
+    self.assertTrue(self.Client.HashToPath(self.FileHashNX))
+    self.assertIsInstance(self.Client.HashToPath(self.FileHash), str)
+    for bad_hash in self.FileHashInvalidList:
+      with self.assertRaises(ValueError):
+        self.Client.HashToPath(bad_hash)
+    for bad_type in self.FileHashInvalidType:
+      with self.assertRaises(TypeError):
+        self.Client.HashToPath(bad_type)
+    self.assertTrue(
+      self.Client.HashToPath(self.FileHash).startswith(self.Path) )
+    self.assertTrue(
+      self.Client.HashToPath(self.FileHashNX).startswith(self.Path) )
+
+  def test_GetTempDir(self):
+    self.assertTrue(self.Client.TempDir)
+
+
+# class TestClientFile(TestClientBase):
+
+# 	def test_Stream(self):
+# 	def test_Data(self):
+# 	def test_NotADict(self):
 # 	def test_InternalURI(self):
-# 	def test_InternalURIInvalidHash(self):
-# 	def test_InternalURIMissing(self):
 
 
 # class TestClientPut(TestClientBase):
