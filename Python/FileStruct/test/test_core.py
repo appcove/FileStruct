@@ -19,6 +19,7 @@
 from os.path import join, exists, isfile, isdir, dirname, basename, normpath
 import unittest
 import os
+import io
 import pwd
 import grp
 import tempfile
@@ -295,7 +296,12 @@ class TestClientOps(TestClientBase):
     self.FileContents = b'abcd'
     self.FileHash = self.Client.PutData(self.FileContents)
 
-    self.FileHashNX = self.Client.PutData(b'')
+    self.FileHashEmpty = self.Client.PutData(b'')
+    os.unlink(self.Client[self.FileHashEmpty].Path)
+
+    self.FileContentsNX = b'abcde'
+    self.FileHashNX = self.Client.PutData(self.FileContentsNX)
+    self.FilePathNX = self.Client[self.FileHashNX].Path
     os.unlink(self.Client[self.FileHashNX].Path)
 
     random.seed(42)
@@ -406,15 +412,151 @@ class TestClientHashes(TestClientOps):
     self.assertTrue(self.Client.TempDir)
 
 
-# class TestClientFile(TestClientBase):
+class TestClientFile(TestClientOps):
 
-# 	def test_Stream(self):
-# 	def test_Data(self):
-# 	def test_NotADict(self):
-# 	def test_InternalURI(self):
+  def test_Removal(self):
+    self.assertFalse(self.FileHashNX in self.Client)
+    with self.assertRaises(KeyError):
+      self.Client[self.FileHashNX]
+
+    file_hash = self.Client.PutData(b'dsdfjlkjasdjkasd')
+    file_path = self.Client[file_hash].Path
+    os.unlink(file_path)
+    self.assertFalse(file_hash in self.Client)
+    with self.assertRaises(KeyError):
+      self.Client[file_hash]
+    self.assertFalse(exists(file_path))
+
+  def test_StreamFile(self):
+    with tempfile.TemporaryFile() as tmp:
+      tmp.write(self.FileContentsNX)
+      tmp.seek(0)
+      file_hash = self.Client.PutStream(tmp)
+      self.assertFalse(tmp.closed)
+      self.assertTrue(tmp.tell() == len(self.FileContentsNX))
+      tmp.seek(0)
+      self.assertEqual(tmp.read(), self.FileContentsNX)
+    self.assertEqual(file_hash, self.FileHashNX)
+    self.assertTrue(exists(self.Client[self.FileHashNX].Path))
+    with open(self.Client[self.FileHashNX].Path, 'rb') as src:
+      self.assertEqual(src.read(), self.FileContentsNX)
+
+  def test_StreamBuffer(self):
+    tmp = io.BytesIO(self.FileContentsNX)
+    file_hash = self.Client.PutStream(tmp)
+    self.assertEqual(file_hash, self.FileHashNX)
+    self.assertTrue(exists(self.Client[self.FileHashNX].Path))
+    with open(self.Client[self.FileHashNX].Path, 'rb') as src:
+      self.assertEqual(src.read(), self.FileContentsNX)
+
+  def test_LargeStream(self):
+    with tempfile.TemporaryFile() as tmp:
+      tmp_hash = hashlib.sha384()
+      null_chunk = bytearray(2**20) # 1 MiB
+      for i in range(10): # 10 MiB
+        tmp.write(null_chunk)
+        tmp_hash.update(null_chunk)
+      tmp.seek(0)
+      file_hash = self.Client.PutStream(tmp)
+    with open(self.Client[file_hash].Path, 'rb') as tmp2:
+      tmp2_hash = hashlib.sha384()
+      for chunk in iter(lambda: tmp2.read(2**20), b''):
+        tmp2_hash.update(chunk)
+    self.assertEqual(tmp_hash.digest(), tmp2_hash.digest())
+
+  def test_StreamCustom(self):
+    test = self
+    class FileLikeObject: # bare-minimum filelike object
+      data = self.FileContentsNX
+      def read(self, n):
+        test.assertIsInstance(n, int)
+        if self.data:
+          data, self.data = self.data, None
+          return data
+        else: return b''
+
+    file_hash = self.Client.PutStream(FileLikeObject())
+    self.assertEqual(file_hash, self.FileHashNX)
+    self.assertTrue(exists(self.Client[self.FileHashNX].Path))
+    with open(self.Client[self.FileHashNX].Path, 'rb') as src:
+      self.assertEqual(src.read(), self.FileContentsNX)
+
+  def test_StreamFail(self):
+    with self.assertRaises(AttributeError):
+      self.Client.PutStream(object())
+    with self.assertRaises(AttributeError):
+      self.Client.PutStream(None)
+    with self.assertRaises(AttributeError):
+      self.Client.PutStream(b'')
+
+  def test_File(self):
+    with tempfile.NamedTemporaryFile() as tmp:
+      tmp.write(self.FileContentsNX)
+      tmp.seek(0)
+      file_hash = self.Client.PutFile(tmp.name)
+      tmp.seek(0)
+      self.assertEqual(tmp.read(), self.FileContentsNX)
+      self.assertTrue(exists(tmp.name))
+    self.assertEqual(file_hash, self.FileHashNX)
+    self.assertTrue(exists(self.Client[self.FileHashNX].Path))
+    with open(self.Client[self.FileHashNX].Path, 'rb') as src:
+      self.assertEqual(src.read(), self.FileContentsNX)
+
+  def test_FileFD(self):
+    tmp_fd, tmp_name = tempfile.mkstemp()
+    try:
+      with open(tmp_fd, 'ab+', closefd=False) as tmp:
+        tmp.write(self.FileContentsNX)
+        tmp.seek(0)
+      file_hash = self.Client.PutFile(tmp_fd)
+    finally:
+      os.unlink(tmp_name)
+    self.assertEqual(file_hash, self.FileHashNX)
+    self.assertTrue(exists(self.Client[self.FileHashNX].Path))
+
+  def test_FileFail(self):
+    with self.assertRaises(TypeError):
+      self.Client.PutFile(object())
+    self.assertFalse(exists(self.FilePathNX))
+    with self.assertRaises(FileNotFoundError):
+      self.Client.PutFile(self.FilePathNX)
+    with open(self.FilePathNX, 'w'):
+      try:
+        os.chmod(self.FilePathNX, 0)
+        with self.assertRaises(PermissionError):
+          self.Client.PutFile(self.FilePathNX)
+      finally:
+        os.unlink(self.FilePathNX)
+
+  def test_Data(self):
+    file_hash = self.Client.PutData(self.FileContentsNX)
+    self.assertEqual(file_hash, self.FileHashNX)
+    self.assertTrue(exists(self.Client[self.FileHashNX].Path))
+    with open(self.Client[self.FileHashNX].Path, 'rb') as src:
+      self.assertEqual(src.read(), self.FileContentsNX)
+
+  def test_DataNone(self):
+    file_hash = self.Client.PutData(None)
+    self.assertEqual(self.FileHashEmpty, file_hash)
+
+  def test_DataFail(self):
+    with self.assertRaises(TypeError):
+      self.Client.PutData(object())
+    with self.assertRaises(TypeError):
+      self.Client.PutData(True)
+    with self.assertRaises(TypeError):
+      self.Client.PutData('asdx')
+
+  def test_HashConsistency(self):
+    file_hash = self.Client.PutData(self.FileContentsNX)
+    self.assertEqual(file_hash, self.FileHashNX)
+
+  def test_HashOverwrite(self):
+    # Shouldn't raise any errors
+    file_hash = self.Client.PutData(self.FileContents)
+    self.assertEqual(file_hash, self.FileHash)
 
 
-# class TestClientPut(TestClientBase):
 # class TestClientTempDir(TestClientBase):
 
 
