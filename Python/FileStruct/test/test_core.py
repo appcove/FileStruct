@@ -770,10 +770,10 @@ class TestClientTempDir(TestClientOps):
 
 
 
-class TestClientTempFile(TestClientOps, ClientGetTestsMixin):
+class TestClientTempOps(TestClientOps):
 
   def setUp(self):
-    super(TestClientTempFile, self).setUp()
+    super(TestClientTempOps, self).setUp()
     self.Contexts = contextlib.ExitStack()
     self.TempDir = self.Client.TempDir()
     self.Contexts.enter_context(self.TempDir)
@@ -789,8 +789,66 @@ class TestClientTempFile(TestClientOps, ClientGetTestsMixin):
 
   def tearDown(self):
     self.Contexts.close()
-    super(TestClientTempFile, self).tearDown()
+    super(TestClientTempOps, self).tearDown()
 
+
+
+class TestClientTempConvert(TestClientTempOps):
+
+  def setUp(self):
+    super(TestClientTempConvert, self).setUp()
+
+    skip = not exists(self.Client.bin_convert)
+    self.skip = unittest.skip( 'No ImageMagick'
+        ' "convert" binary found at {}'.format(self.Client.bin_convert) )\
+      if skip else False
+    if self.skip: return self.skip
+
+    self.TempImageSource = join(dirname(__file__), 'image.jpg')
+    self.TempImageName = 'imagefile'
+    self.TempImage = self.TempDir[self.TempImageName]
+    self.TempImage.PutFile(self.TempImageSource)
+
+    self.TempImageHash = self.Client.PutFile(self.TempImageSource)
+
+    self.ValidSizeSpec = '100x100'
+
+  def test_Basic(self):
+    if self.skip: return self.skip
+    self.TempDir.convert_resize(self.TempImageName, self.TempImageName+'2', self.ValidSizeSpec)
+
+  def test_Linked(self):
+    if self.skip: return self.skip
+    self.TempFileNX.Link(self.TempImageHash)
+    self.TempDir.convert_resize(self.TempFileNameNX, self.TempImageName+'2', self.ValidSizeSpec)
+
+  def test_Overwrite(self):
+    if self.skip: return self.skip
+    self.TempDir.convert_resize(self.TempImageName, self.TempFileName, self.ValidSizeSpec)
+    self.assertNotEqual(self.TempFile.GetData(), self.FileContentsTemp)
+
+  def test_FailTypes(self):
+    if self.skip: return self.skip
+    with self.assertRaises(TypeError):
+      self.TempDir.convert_resize(self.TempImageName, self.TempImageName+'2')
+    with self.assertRaises(TypeError):
+      self.TempDir.convert_resize(self.TempImageName)
+
+    for bad_srcdst_type in [object(), None, True, b'file']:
+      with self.assertRaises(TypeError):
+        self.TempDir.convert_resize(bad_srcdst_type, self.TempImageName+'2', self.ValidSizeSpec)
+      with self.assertRaises(TypeError):
+        self.TempDir.convert_resize(self.TempImageName, bad_srcdst_type, self.ValidSizeSpec)
+
+  def test_FailNX(self):
+    if self.skip: return self.skip
+    with self.assertRaises(FileStruct.Error):
+      self.TempDir.convert_resize(
+        self.TempFileNameNX, self.TempImageName+'2', self.ValidSizeSpec )
+
+
+
+class TestClientTempFile(TestClientTempOps, ClientGetTestsMixin):
 
   def test_Ingest(self):
     self.assertTrue(isdir(self.TempDir.Path))
@@ -915,11 +973,11 @@ class TestClientTempFile(TestClientOps, ClientGetTestsMixin):
 
   def test_DataFail(self):
     with self.assertRaises(TypeError):
-      self.Client.PutData(object())
+      self.TempFileNX.PutData(object())
     with self.assertRaises(TypeError):
-      self.Client.PutData(True)
+      self.TempFileNX.PutData(True)
     with self.assertRaises(TypeError):
-      self.Client.PutData('asdx')
+      self.TempFileNX.PutData('asdx')
 
 
   def test_GetAttrs(self):
