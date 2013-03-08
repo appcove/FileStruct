@@ -17,7 +17,8 @@
 
 
 from os.path import (
-  join, exists, isfile, isdir, dirname, basename,
+  join, exists, isfile, isdir, islink,
+  dirname, basename,
   normpath, sameopenfile, samefile )
 import unittest
 import os
@@ -44,6 +45,7 @@ except ImportError:
     import FileStruct
   finally:
     sys.path.pop(0)
+
 
 
 class TestClientBase(unittest.TestCase):
@@ -77,6 +79,7 @@ class TestClientBase(unittest.TestCase):
       self.client_from_config(config, json_encode=json_encode)
 
 
+
 class TestClientBasic(TestClientBase):
 
   def test_Minimal(self):
@@ -105,6 +108,7 @@ class TestClientBasic(TestClientBase):
     self.client_from_config({'Version': 1, 'User': 'one', 'Group': 'two'})
     self.client_from_config({'Version': 1, 'User': None, 'Group': None})
     self.client_from_config({'Version': 1, 'User': [1, 'asd'], 'Group': {'a': [42]}})
+
 
 
 class TestClientInvalidConfig(TestClientBase):
@@ -167,6 +171,7 @@ class TestClientInvalidConfig(TestClientBase):
       FileStruct.Client(self.Path)
 
     self.assertTrue(exists(self.PathConfig))
+
 
 
 class TestClientDBDir(TestClientBase):
@@ -287,6 +292,7 @@ class TestClientDBDir(TestClientBase):
       os.stat = stat
 
 
+
 class TestClientOps(TestClientBase):
 
   class UnhandledTestException(Exception): pass
@@ -325,6 +331,7 @@ class TestClientOps(TestClientBase):
       None, object(), str, type, True, self.FileHash.encode('ascii') ]
 
 
+
 class TestClientAttrs(TestClientOps):
 
   def test_PublicAttrs(self):
@@ -335,6 +342,7 @@ class TestClientAttrs(TestClientOps):
     self.assertEqual(self.PathConfig, self.Client.ConfPath)
     self.assertEqual(self.ValidConfigVersion, self.Client.Version)
     self.assertEqual(self.InternalLocation, self.Client.InternalLocation)
+
 
 
 class TestClientHashes(TestClientOps):
@@ -418,7 +426,90 @@ class TestClientHashes(TestClientOps):
     self.assertTrue(self.Client.TempDir)
 
 
-class TestClientFile(TestClientOps):
+
+class ClientGetTestsMixin: # re-used for HashFile and TempFile tests
+
+  def get_client_file_obj(self):
+    raise NotImplementedError
+
+  def get_client_file_data(self):
+    raise NotImplementedError
+
+  def test_GetData(self):
+    self.assertEqual(self.get_client_file_obj().GetData(), self.get_client_file_data())
+
+  def test_GetStream(self):
+    file_obj = self.get_client_file_obj()
+    stream = file_obj.GetStream()
+    try:
+      self.assertEqual(stream.tell(), 0)
+      self.assertEqual(stream.read(), self.get_client_file_data())
+      self.assertEqual(stream.tell(), len(self.get_client_file_data()))
+      stream.seek(0)
+      self.assertEqual(stream.tell(), 0)
+      self.assertTrue(stream.name)
+    finally:
+      stream.close()
+    stream.close() # should not raise errors on double-close
+    self.assertTrue(stream.closed)
+
+  def test_GetStreamContext(self):
+    with self.get_client_file_obj().GetStream() as stream:
+      self.assertEqual(stream.read(), self.get_client_file_data())
+
+  def test_GetStreamFD(self):
+    stream = self.get_client_file_obj().GetStream()
+    try:
+      self.assertIsInstance(stream.fileno(), int)
+      with open(stream.fileno(), 'rb', closefd=False) as stream_clone:
+        self.assertEqual(stream_clone.read(), self.get_client_file_data())
+      self.assertEqual(stream.tell(), len(self.get_client_file_data()))
+      self.assertFalse(stream.closed)
+    finally:
+      stream.close()
+
+  def test_GetFailNX(self):
+    file_obj = self.get_client_file_obj()
+    os.unlink(file_obj.Path)
+    with self.assertRaises(FileNotFoundError):
+      file_obj.GetData()
+    with self.assertRaises(FileNotFoundError):
+      file_obj.GetStream()
+
+  def test_GetFailPerm(self):
+    file_obj = self.get_client_file_obj()
+    os.chmod(file_obj.Path, 0)
+    with self.assertRaises(PermissionError):
+      file_obj.GetData()
+    with self.assertRaises(PermissionError):
+      file_obj.GetStream()
+
+  def test_GetFailContext(self):
+    with self.assertRaises(self.UnhandledTestException):
+      with self.get_client_file_obj().GetStream() as stream:
+        raise self.UnhandledTestException()
+    self.assertTrue(stream.closed)
+
+  def test_GetStreamNoCache(self):
+    # Make sure that GetStream doesn't create temporary
+    #  file and refers to the same fs object as BaseFile.Path
+    file_obj = self.get_client_file_obj()
+    stream = file_obj.GetStream()
+    self.assertTrue(samefile(stream.name, file_obj.Path))
+    with open(file_obj.Path, 'rb') as tmp:
+      self.assertTrue(sameopenfile(stream.fileno(), tmp.fileno()))
+    try:
+      os.unlink(file_obj.Path)
+      self.assertFalse(stream.closed)
+      self.assertFalse(exists(stream.name))
+      with self.assertRaises(FileNotFoundError):
+        file_obj.GetStream()
+    finally:
+      stream.close()
+
+
+
+class TestClientFile(TestClientOps, ClientGetTestsMixin):
 
   def test_Removal(self):
     self.assertFalse(self.FileHashNX in self.Client)
@@ -433,6 +524,7 @@ class TestClientFile(TestClientOps):
       self.Client[file_hash]
     self.assertFalse(exists(file_path))
 
+
   def test_StreamFile(self):
     with tempfile.TemporaryFile() as tmp:
       tmp.write(self.FileContentsNX)
@@ -443,7 +535,7 @@ class TestClientFile(TestClientOps):
       tmp.seek(0)
       self.assertEqual(tmp.read(), self.FileContentsNX)
     self.assertEqual(file_hash, self.FileHashNX)
-    self.assertTrue(exists(self.Client[self.FileHashNX].Path))
+    self.assertTrue(isfile(self.Client[self.FileHashNX].Path))
     with open(self.Client[self.FileHashNX].Path, 'rb') as src:
       self.assertEqual(src.read(), self.FileContentsNX)
 
@@ -451,7 +543,7 @@ class TestClientFile(TestClientOps):
     tmp = io.BytesIO(self.FileContentsNX)
     file_hash = self.Client.PutStream(tmp)
     self.assertEqual(file_hash, self.FileHashNX)
-    self.assertTrue(exists(self.Client[self.FileHashNX].Path))
+    self.assertTrue(isfile(self.Client[self.FileHashNX].Path))
     with open(self.Client[self.FileHashNX].Path, 'rb') as src:
       self.assertEqual(src.read(), self.FileContentsNX)
 
@@ -483,7 +575,7 @@ class TestClientFile(TestClientOps):
 
     file_hash = self.Client.PutStream(FileLikeObject())
     self.assertEqual(file_hash, self.FileHashNX)
-    self.assertTrue(exists(self.Client[self.FileHashNX].Path))
+    self.assertTrue(isfile(self.Client[self.FileHashNX].Path))
     with open(self.Client[self.FileHashNX].Path, 'rb') as src:
       self.assertEqual(src.read(), self.FileContentsNX)
 
@@ -502,9 +594,9 @@ class TestClientFile(TestClientOps):
       file_hash = self.Client.PutFile(tmp.name)
       tmp.seek(0)
       self.assertEqual(tmp.read(), self.FileContentsNX)
-      self.assertTrue(exists(tmp.name))
+      self.assertTrue(isfile(tmp.name))
     self.assertEqual(file_hash, self.FileHashNX)
-    self.assertTrue(exists(self.Client[self.FileHashNX].Path))
+    self.assertTrue(isfile(self.Client[self.FileHashNX].Path))
     with open(self.Client[self.FileHashNX].Path, 'rb') as src:
       self.assertEqual(src.read(), self.FileContentsNX)
 
@@ -518,7 +610,7 @@ class TestClientFile(TestClientOps):
     finally:
       os.unlink(tmp_name)
     self.assertEqual(file_hash, self.FileHashNX)
-    self.assertTrue(exists(self.Client[self.FileHashNX].Path))
+    self.assertTrue(isfile(self.Client[self.FileHashNX].Path))
 
   def test_FileFail(self):
     with self.assertRaises(TypeError):
@@ -537,7 +629,7 @@ class TestClientFile(TestClientOps):
   def test_Data(self):
     file_hash = self.Client.PutData(self.FileContentsNX)
     self.assertEqual(file_hash, self.FileHashNX)
-    self.assertTrue(exists(self.Client[self.FileHashNX].Path))
+    self.assertTrue(isfile(self.Client[self.FileHashNX].Path))
     with open(self.Client[self.FileHashNX].Path, 'rb') as src:
       self.assertEqual(src.read(), self.FileContentsNX)
 
@@ -552,6 +644,7 @@ class TestClientFile(TestClientOps):
       self.Client.PutData(True)
     with self.assertRaises(TypeError):
       self.Client.PutData('asdx')
+
 
   def test_HashConsistency(self):
     file_hash = self.Client.PutData(self.FileContentsNX)
@@ -583,6 +676,7 @@ class TestClientFile(TestClientOps):
     file_hash = client.PutData(self.FileContents)
     self.assertTrue(client[file_hash].InternalURI.startswith(bad_path))
 
+
   def test_GetAttrs(self):
     self.assertTrue(self.Client[self.FileHash].Path)
     self.assertIsInstance(self.Client[self.FileHash].Path, str)
@@ -590,88 +684,23 @@ class TestClientFile(TestClientOps):
     self.assertEqual(self.Client[self.FileHash].Hash, self.FileHash)
     self.assertTrue(self.Client[self.FileHash].InternalURI)
 
-  def test_GetData(self):
-    self.assertEqual(self.Client[self.FileHash].GetData(), self.FileContents)
-
-  def test_GetStream(self):
-    file_obj = self.Client[self.FileHash]
-    stream = file_obj.GetStream()
-    try:
-      self.assertEqual(stream.tell(), 0)
-      self.assertEqual(stream.read(), self.FileContents)
-      self.assertEqual(stream.tell(), len(self.FileContents))
-      stream.seek(0)
-      self.assertEqual(stream.tell(), 0)
-      self.assertTrue(stream.name)
-    finally:
-      stream.close()
-    stream.close() # should not raise errors on double-close
-    self.assertTrue(stream.closed)
-
-  def test_GetStreamContext(self):
-    with self.Client[self.FileHash].GetStream() as stream:
-      self.assertEqual(stream.read(), self.FileContents)
-
-  def test_GetStreamFD(self):
-    stream = self.Client[self.FileHash].GetStream()
-    try:
-      self.assertIsInstance(stream.fileno(), int)
-      with open(stream.fileno(), 'rb', closefd=False) as stream_clone:
-        self.assertEqual(stream_clone.read(), self.FileContents)
-      self.assertEqual(stream.tell(), len(self.FileContents))
-      self.assertFalse(stream.closed)
-    finally:
-      stream.close()
-
-  def test_GetFailNX(self):
-    file_obj = self.Client[self.FileHash]
-    os.unlink(file_obj.Path)
-    with self.assertRaises(FileNotFoundError):
-      file_obj.GetData()
-    with self.assertRaises(FileNotFoundError):
-      file_obj.GetStream()
-
-  def test_GetFailPerm(self):
-    file_obj = self.Client[self.FileHash]
-    os.chmod(file_obj.Path, 0)
-    with self.assertRaises(PermissionError):
-      file_obj.GetData()
-    with self.assertRaises(PermissionError):
-      file_obj.GetStream()
-
-  def test_GetFailContext(self):
-    with self.assertRaises(self.UnhandledTestException):
-      with self.Client[self.FileHash].GetStream() as stream:
-        raise self.UnhandledTestException()
-    self.assertTrue(stream.closed)
-
-  def test_GetStreamNoCache(self):
-    # Make sure that GetStream doesn't create temporary
-    #  file and refers to the same fs object as BaseFile.Path
-    file_obj = self.Client[self.FileHash]
-    stream = file_obj.GetStream()
-    self.assertTrue(samefile(stream.name, file_obj.Path))
-    with open(file_obj.Path, 'rb') as tmp:
-      self.assertTrue(sameopenfile(stream.fileno(), tmp.fileno()))
-    try:
-      os.unlink(file_obj.Path)
-      self.assertFalse(stream.closed)
-      self.assertFalse(exists(stream.name))
-      with self.assertRaises(FileNotFoundError):
-        file_obj.GetStream()
-    finally:
-      stream.close()
-
   def test_GetMulticlient(self):
     # Make sure there's no locking involved (if added - update docs)
     client2 = FileStruct.Client(self.Path)
-    file_obj1 = self.Client[self.FileHash]
+    file_obj1 = self.get_client_file_obj()
     file_obj2 = client2[self.FileHash]
     with file_obj1.GetStream() as stream1:
-      file_obj2.GetData()
+      self.assertEqual(file_obj1.GetData(), file_obj2.GetData())
       with file_obj2.GetStream() as stream2:
         self.assertTrue(sameopenfile(stream1.fileno(), stream2.fileno()))
       self.assertFalse(stream1.closed)
+
+  # For ClientGetTestsMixin
+  def get_client_file_obj(self):
+    return self.Client[self.FileHash]
+  def get_client_file_data(self):
+    return self.FileContents
+
 
 
 class TestClientTempDir(TestClientOps):
@@ -690,6 +719,14 @@ class TestClientTempDir(TestClientOps):
       tmpdir_path = tmpdir.Path
       self.assertTrue(isdir(tmpdir_path))
     self.assertFalse(exists(tmpdir_path))
+
+  def test_CleanupTempFiles(self):
+    with self.Client.TempDir() as tmpdir:
+      tmpfile = tmpdir['file']
+      tmpfile.PutData(b'asd')
+      self.assertTrue(exists(tmpfile.Path))
+    self.assertFalse(exists(tmpfile.Path))
+    self.assertFalse(exists(tmpdir.Path))
 
   def test_CleanupClutter(self):
     with self.Client.TempDir() as tmpdir:
@@ -732,7 +769,8 @@ class TestClientTempDir(TestClientOps):
       if not success: raise
 
 
-class TestClientTempFile(TestClientOps):
+
+class TestClientTempFile(TestClientOps, ClientGetTestsMixin):
 
   def setUp(self):
     super(TestClientTempFile, self).setUp()
@@ -741,105 +779,219 @@ class TestClientTempFile(TestClientOps):
     self.Contexts.enter_context(self.TempDir)
 
     self.FileContentsTemp = self.FileContentsNX
-    self.TempFile = self.TempDir['file']
-    self.TempFile.PutData(self.FileContentsNX) # TODO: dependency for get tests
+    self.TempFileName = 'file'
+    self.TempFile = self.TempDir[self.TempFileName]
+    self.TempFile.PutData(self.FileContentsTemp)
+
+    self.FileContentsTempNX = self.FileContents
+    self.TempFileNameNX = 'fileNX'
+    self.TempFileNX = self.TempDir[self.TempFileNameNX]
 
   def tearDown(self):
     self.Contexts.close()
     super(TestClientTempFile, self).tearDown()
 
-  def test_PublicAttrs(self):
-    self.assertTrue(self.TempFile.Path)
-    self.assertIsInstance(self.TempFile.Path, str)
-    self.assertTrue(self.TempFile.Path.startswith(self.TempDir.Path))
-    self.assertIs(self.TempFile.TempDir, self.TempDir)
 
   def test_Ingest(self):
-    self.assertTrue(exists(self.TempDir.Path))
+    self.assertTrue(isdir(self.TempDir.Path))
     tmp_hash = self.TempFile.Ingest()
     self.assertEqual(self.FileHashNX, tmp_hash)
     self.assertTrue(tmp_hash in self.Client)
     self.assertTrue(self.Client[tmp_hash])
 
+  def test_NoCreate(self):
+    self.assertFalse(exists(self.TempFileNX.Path))
 
-  def test_GetData(self):
-    self.assertEqual(self.TempFile.GetData(), self.FileContentsTemp)
 
-  def test_GetStream(self):
-    file_obj = self.TempFile
-    stream = file_obj.GetStream()
+  # Put tests are a bit different from these for HashFile
+  #  due to abscence of hashes and related checks
+
+  def test_StreamFile(self):
+    with tempfile.TemporaryFile() as tmp:
+      tmp.write(self.FileContentsTempNX)
+      tmp.seek(0)
+      self.TempFileNX.PutStream(tmp)
+      self.assertFalse(tmp.closed)
+      self.assertTrue(tmp.tell() == len(self.FileContentsTempNX))
+      tmp.seek(0)
+      self.assertEqual(tmp.read(), self.FileContentsTempNX)
+    self.assertTrue(isfile(self.TempFileNX.Path))
+    with open(self.TempFileNX.Path, 'rb') as src:
+      self.assertEqual(src.read(), self.FileContentsTempNX)
+
+  def test_StreamBuffer(self):
+    tmp = io.BytesIO(self.FileContentsTempNX)
+    self.TempFileNX.PutStream(tmp)
+    self.assertTrue(isfile(self.TempFileNX.Path))
+    with open(self.TempFileNX.Path, 'rb') as src:
+      self.assertEqual(src.read(), self.FileContentsTempNX)
+
+  def test_LargeStream(self):
+    with tempfile.TemporaryFile() as tmp:
+      tmp_hash = hashlib.sha384()
+      null_chunk = bytearray(2**20) # 1 MiB
+      for i in range(10): # 10 MiB
+        tmp.write(null_chunk)
+        tmp_hash.update(null_chunk)
+      tmp.seek(0)
+      self.TempFileNX.PutStream(tmp)
+    with open(self.TempFileNX.Path, 'rb') as tmp2:
+      tmp2_hash = hashlib.sha384()
+      for chunk in iter(lambda: tmp2.read(2**20), b''):
+        tmp2_hash.update(chunk)
+    self.assertEqual(tmp_hash.digest(), tmp2_hash.digest())
+
+  def test_StreamCustom(self):
+    test = self
+    class FileLikeObject: # bare-minimum filelike object
+      data = self.FileContentsTempNX
+      def read(self, n):
+        test.assertIsInstance(n, int)
+        if self.data:
+          data, self.data = self.data, None
+          return data
+        else: return b''
+
+    self.TempFileNX.PutStream(FileLikeObject())
+    self.assertTrue(isfile(self.TempFileNX.Path))
+    with open(self.TempFileNX.Path, 'rb') as src:
+      self.assertEqual(src.read(), self.FileContentsTempNX)
+
+  def test_StreamFail(self):
+    with self.assertRaises(AttributeError):
+      self.TempFileNX.PutStream(object())
+    with self.assertRaises(AttributeError):
+      self.TempFileNX.PutStream(None)
+    with self.assertRaises(AttributeError):
+      self.TempFileNX.PutStream(b'')
+
+  def test_File(self):
+    with tempfile.NamedTemporaryFile() as tmp:
+      tmp.write(self.FileContentsTempNX)
+      tmp.seek(0)
+      self.TempFileNX.PutFile(tmp.name)
+      tmp.seek(0)
+      self.assertEqual(tmp.read(), self.FileContentsTempNX)
+      self.assertTrue(isfile(tmp.name))
+    self.assertTrue(isfile(self.TempFileNX.Path))
+    with open(self.TempFileNX.Path, 'rb') as src:
+      self.assertEqual(src.read(), self.FileContentsTempNX)
+
+  def test_FileFD(self):
+    tmp_fd, tmp_name = tempfile.mkstemp()
     try:
-      self.assertEqual(stream.tell(), 0)
-      self.assertEqual(stream.read(), self.FileContentsTemp)
-      self.assertEqual(stream.tell(), len(self.FileContentsTemp))
-      stream.seek(0)
-      self.assertEqual(stream.tell(), 0)
-      self.assertTrue(stream.name)
+      with open(tmp_fd, 'ab+', closefd=False) as tmp:
+        tmp.write(self.FileContentsTempNX)
+        tmp.seek(0)
+      self.TempFileNX.PutFile(tmp_fd)
     finally:
-      stream.close()
-    stream.close() # should not raise errors on double-close
-    self.assertTrue(stream.closed)
+      os.unlink(tmp_name)
+    self.assertTrue(isfile(self.TempFileNX.Path))
 
-  def test_GetStreamContext(self):
-    with self.TempFile.GetStream() as stream:
-      self.assertEqual(stream.read(), self.FileContentsTemp)
-
-  def test_GetStreamFD(self):
-    stream = self.TempFile.GetStream()
-    try:
-      self.assertIsInstance(stream.fileno(), int)
-      with open(stream.fileno(), 'rb', closefd=False) as stream_clone:
-        self.assertEqual(stream_clone.read(), self.FileContentsTemp)
-      self.assertEqual(stream.tell(), len(self.FileContentsTemp))
-      self.assertFalse(stream.closed)
-    finally:
-      stream.close()
-
-  def test_GetFailNX(self):
-    os.unlink(self.TempFile.Path)
+  def test_FileFail(self):
+    with self.assertRaises(TypeError):
+      self.TempFileNX.PutFile(object())
+    self.assertFalse(exists(self.FilePathNX))
     with self.assertRaises(FileNotFoundError):
-      self.TempFile.GetData()
-    with self.assertRaises(FileNotFoundError):
-      self.TempFile.GetStream()
+      self.TempFileNX.PutFile(self.FilePathNX)
+    with open(self.FilePathNX, 'w'):
+      try:
+        os.chmod(self.FilePathNX, 0)
+        with self.assertRaises(PermissionError):
+          self.Client.PutFile(self.FilePathNX)
+      finally:
+        os.unlink(self.FilePathNX)
 
-  def test_GetFailPerm(self):
+  def test_Data(self):
+    self.TempFileNX.PutData(self.FileContentsTempNX)
+    self.assertTrue(isfile(self.TempFileNX.Path))
+    with open(self.TempFileNX.Path, 'rb') as src:
+      self.assertEqual(src.read(), self.FileContentsTempNX)
+
+  def test_DataNone(self):
+    self.TempFileNX.PutData(None)
+    with open(self.TempFileNX.Path, 'rb') as src:
+      self.assertEqual(src.read(), b'')
+
+  def test_DataFail(self):
+    with self.assertRaises(TypeError):
+      self.Client.PutData(object())
+    with self.assertRaises(TypeError):
+      self.Client.PutData(True)
+    with self.assertRaises(TypeError):
+      self.Client.PutData('asdx')
+
+
+  def test_GetAttrs(self):
+    self.assertTrue(self.TempFile.Path)
+    self.assertIsInstance(self.TempFile.Path, str)
+    self.assertTrue(self.TempFile.Path.startswith(self.TempDir.Path))
+    self.assertIs(self.TempFile.TempDir, self.TempDir)
+
+  def test_GetMultiFile(self):
+    file_obj1 = self.get_client_file_obj()
+    file_obj2 = self.TempDir[self.TempFileName]
+    file_obj3 = self.TempDir[self.TempFileName + 'a']
+    file_obj3.PutData(self.FileContentsNX)
+    with file_obj1.GetStream() as stream1:
+      self.assertEqual(file_obj1.GetData(), file_obj2.GetData())
+      with file_obj2.GetStream() as stream2:
+        self.assertTrue(sameopenfile(stream1.fileno(), stream2.fileno()))
+      self.assertFalse(stream1.closed)
+      with file_obj3.GetStream() as stream2:
+        self.assertFalse(samefile(stream1.name, stream2.name))
+        self.assertFalse(sameopenfile(stream1.fileno(), stream2.fileno()))
+
+  # For ClientGetTestsMixin
+  def get_client_file_obj(self):
+    return self.TempFile
+  def get_client_file_data(self):
+    return self.FileContentsTemp
+
+
+  def test_Link(self):
+    self.TempFileNX.Link(self.FileHash)
+    self.assertFalse(islink(self.Client[self.FileHash].Path))
+    self.assertTrue(islink(self.TempFileNX.Path))
+    self.assertTrue(samefile(self.TempFileNX.Path, self.Client[self.FileHash].Path))
+    with self.TempFileNX.GetStream() as stream1,\
+        self.Client[self.FileHash].GetStream() as stream2:
+      self.assertTrue(sameopenfile(stream1.fileno(), stream2.fileno()))
+
+  def test_LinkFailPaths(self):
+    with self.assertRaises(KeyError):
+      self.TempFile.Link(self.FileHashNX)
+    with self.assertRaises(FileExistsError):
+      self.TempFile.Link(self.FileHash)
+
+  def test_LinkFail(self):
+    with self.assertRaises(TypeError):
+      self.TempFile.Link(object())
+    with self.assertRaises(TypeError):
+      self.TempFile.Link()
+    with self.assertRaises(TypeError):
+      self.TempFile.Link(None)
+    with self.assertRaises(TypeError):
+      self.TempFile.Link(True)
+    with self.assertRaises(TypeError):
+      self.TempFileNX.Link(self.FileHash.encode('utf-8'))
+
+
+  def test_Delete(self):
+    self.TempFile.Delete()
+    self.assertFalse(exists(self.TempFile.Path))
+
+  def test_DeleteRobust(self):
     os.chmod(self.TempFile.Path, 0)
-    with self.assertRaises(PermissionError):
-      self.TempFile.GetData()
-    with self.assertRaises(PermissionError):
-      self.TempFile.GetStream()
+    self.TempFile.Delete()
+    self.assertFalse(exists(self.TempFile.Path))
 
-  def test_GetFailContext(self):
-    with self.assertRaises(self.UnhandledTestException):
-      with self.TempFile.GetStream() as stream:
-        raise self.UnhandledTestException()
-    self.assertTrue(stream.closed)
-
-  def test_GetStreamNoCache(self):
-    # Make sure that GetStream doesn't create temporary
-    #  file and refers to the same fs object as BaseFile.Path
-    stream = self.TempFile.GetStream()
-    self.assertTrue(samefile(stream.name, self.TempFile.Path))
-    with open(self.TempFile.Path, 'rb') as tmp:
-      self.assertTrue(sameopenfile(stream.fileno(), tmp.fileno()))
-    try:
-      os.unlink(self.TempFile.Path)
-      self.assertFalse(stream.closed)
-      self.assertFalse(exists(stream.name))
-      with self.assertRaises(FileNotFoundError):
-        self.TempFile.GetStream()
-    finally:
-      stream.close()
-
-
-  # def test_PutData(self):
-  # 	self.TempFile.PutData(self.FileContentsNX)
-
-
-  # def test_PutFile(self):
-  # def test_Link(self):
-  # def test_Delete(self):
-
+  def test_DeleteFail(self):
+    with self.assertRaises(FileNotFoundError):
+      self.TempFileNX.Delete()
+    os.mkdir(self.TempFileNX.Path)
+    with self.assertRaises(IsADirectoryError):
+      self.TempFileNX.Delete()
 
 
 
