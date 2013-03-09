@@ -95,10 +95,12 @@ class Client():
 
     
     try:
+      stripped_json = None
       with open(self.ConfPath, 'r', encoding='utf-8') as f:
-        self.Conf = json.loads(str.join('', (line for line in f if line[0] != '#')))
+        stripped_json = str.join('', (line for line in f if not line.lstrip().startswith('#')))
+      self.Conf = json.loads(stripped_json)
     except Exception as e:
-      raise ConfigError("Error loading config file '{0}': {1}".format(self.ConfPath, str(e)))
+      raise ConfigError("Error loading config file '{0}': {1}\n\n=== START CONTENTS ===\n{2}\n=== END CONTENTS ===".format(self.ConfPath, str(e), stripped_json))
 
     if not isinstance(self.Conf, dict):
       raise ConfigError("Config file loaded from '{0}' but root element was not an object.".format(self.ConfPath))
