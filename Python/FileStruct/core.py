@@ -247,12 +247,30 @@ class TempDir():
     if not FILENAME_MATCH(FileName):
       raise ValueError("Invalid file name: {0}".format(FileName))
     return TempFile(self, join(self.Path, FileName))
-
+  
   def convert_resize(self, SourceFileName, DestFileName, SizeSpec):
     cmd = (
       self.Client.bin_convert,
       self[SourceFileName].Path,
       '-resize', SizeSpec,
+      self[DestFileName].Path,
+      )
+
+    try:
+      subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as e:
+      raise Error(e.output)
+
+  def convert_normalize(self, SourceFileName, DestFileName, Width, Height):
+    Width = int(Width)
+    Height = int(Height)
+
+    cmd = (
+      self.Client.bin_convert,
+      self[SourceFileName].Path,
+      '-resize', '{0}x{1}^'.format(Width, Height),
+      '-gravity', 'center',
+      '-extent', '{0}x{1}'.format(Width, Height),
       self[DestFileName].Path,
       )
 

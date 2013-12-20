@@ -379,6 +379,26 @@ Opens `filename` in the temporary directory for writing and writes the entire co
 #### `TempDir[filename].Ingest()`
 Calculates the hash of this file and then moves it into the database.  Returns the 40 character hash.  This **moves** the file, so it will no longer exist in the temporary directory.
 
+#### `TempDir.convert_normalize(infile, outfile, pixel_width, pixel_height)`
+This will take a file suitable for input to ImageMagick convert and both resize and normalize it to the specified pixel dimensions.  Smaller images will be enlarged, and from the center of the image will be taken an image of pixel_width by pixel_height.  This is most useful for profile pictures as illustrated in the following code sample:
+
+```python
+with App.FS.TempDir() as TD:
+  TD['upload'].PutStream(self.File['Profile_Pic'].Stream)
+  TD.convert_normalize('upload', 'large.jpg', 512, 512)
+  TD.convert_normalize('large.jpg', 'small.jpg', 128, 128)
+
+  hash1 = TD['large.jpg'].Ingest()
+  hash2 = TD['small.jpg'].Ingest()
+```
+
+#### `TempDir.convert_resize(infile, outfile, imagemagick_size)`
+This is similar to `convert_normalize` except it takes an imagemagick size specification as the third argument.  [See documentation here](http://www.imagemagick.org/Usage/resize/)
+
+For example: 
+`64x64<` will only shrink an image if it is larger.  
+`100x` will resize the image to 100px wide.  
+
 
 ------
 vim:encoding=utf-8:ts=2:sw=2:expandtab
