@@ -395,9 +395,9 @@ with App.FS.TempDir() as TD:
 #### `TempDir.convert_resize(infile, outfile, imagemagick_size)`
 This is similar to `convert_normalize` except it takes an imagemagick size specification as the third argument.  [See documentation here](http://www.imagemagick.org/Usage/resize/)
 
-For example: 
-`64x64<` will only shrink an image if it is larger.  
-`100x` will resize the image to 100px wide.  
+For example:  
+`'64x64<'` will only shrink an image if it is larger.  
+`'100x'` will resize the image to 100px wide.  
 
 
 ------
