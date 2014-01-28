@@ -70,12 +70,13 @@ class ConfigError(Error):
 
 
 class Client():
-  def __init__(self, Path, InternalLocation='/FileStruct'):
+  def __init__(self, Path, InternalLocation='/FileStruct/Data'):
     self.Path = abspath(Path)
     self.DataPath = join(self.Path, 'Data')
     self.ErrorPath = join(self.Path, 'Error')
     self.TempPath = join(self.Path, 'Temp')
     self.TrashPath = join(self.Path, 'Trash')
+    self.StaticPath = join(self.Path, 'Static')
     self.ConfPath = join(self.Path, 'FileStruct.json')
     
     
@@ -127,7 +128,7 @@ class Client():
     
     # Make the basic database directories if they do not exist. 
     try:
-      for dir in (self.DataPath, self.ErrorPath, self.TempPath, self.TrashPath):
+      for dir in (self.DataPath, self.ErrorPath, self.TempPath, self.TrashPath, self.StaticPath):
         if not isdir(dir):
           self._mkdir(dir)
     except Exception as e:
